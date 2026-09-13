@@ -1,0 +1,59 @@
+name: Actualizar radar de capacitaciones
+
+on:
+  schedule:
+    # 11:00 UTC = 08:00 en Chile (horario de verano) / 07:00 (invierno), lunes a viernes
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Generar informe desde la API de Mercado Publico
+        shell: pwsh
+        env:
+          # Opcional: ticket propio de api.mercadopublico.cl guardado como secret.
+          # Si no existe, el script usa el ticket publico de prueba (mas lento).
+          MP_TICKET: ${{ secrets.MP_TICKET }}
+        run: ./buscar_licitaciones.ps1
+
+      - name: Guardar cache de detalles en el repositorio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cache_detalles.json
+          git diff --cached --quiet || git commit -m "Actualizar cache de detalles"
+          git push
+
+      - name: Preparar sitio
+        run: |
+          mkdir -p site
+          cp salida/informe_licitaciones_capacitacion.html site/index.html
+          cp salida/licitaciones_capacitacion.csv site/
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Subir sitio
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publicar en GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
