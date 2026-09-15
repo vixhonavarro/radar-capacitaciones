@@ -99,6 +99,19 @@ function ParseFecha($s) {
     try { return [datetime]::Parse(('' + $s), $Inv) } catch { return $null }
 }
 
+function Get-AhoraChile {
+    # Las fechas de la API vienen en hora de Chile; GitHub Actions corre en UTC,
+    # asi que "ahora" debe convertirse siempre a hora chilena.
+    $utc = [DateTime]::UtcNow
+    foreach ($id in @('America/Santiago', 'Pacific SA Standard Time')) {
+        try {
+            $tz = [TimeZoneInfo]::FindSystemTimeZoneById($id)
+            return [TimeZoneInfo]::ConvertTimeFromUtc($utc, $tz)
+        } catch { }
+    }
+    return Get-Date
+}
+
 # --- Modalidad de la capacitacion, detectada en el texto (nombre + descripcion
 #     normalizados). "Online" implica que puede dictarse desde cualquier lugar.
 $PatronMixta      = 'semi-?presencial|b-?learning|hibrid|modalidad mixta'
@@ -192,14 +205,15 @@ foreach ($p in $pendientes) {
 Guardar-Cache
 
 # ------------------------------------------------------ 4) registros finales
-$ahora = Get-Date
+$ahora = Get-AhoraChile
 $registros = @()
 foreach ($c in $coincidencias) {
     if ($null -ne $c.FechaCierre -and $c.FechaCierre -lt $ahora) { continue }  # ya cerradas
     $det = $null
     if ($cache.ContainsKey($c.Codigo)) { $det = $cache[$c.Codigo] }
+    # Dias de calendario hasta el cierre: 0 = cierra hoy, 1 = manana, etc.
     $dias = $null
-    if ($null -ne $c.FechaCierre) { $dias = [int][Math]::Ceiling(($c.FechaCierre - $ahora).TotalDays) }
+    if ($null -ne $c.FechaCierre) { $dias = ($c.FechaCierre.Date - $ahora.Date).Days }
     $monto = $null; $moneda = 'CLP'; $montoPublicado = $false
     $org = ''; $region = ''; $comuna = ''; $tipo = ''; $descr = ''; $fpub = $null; $rubro = $false; $unidad = ''
     if ($null -ne $det) {
@@ -263,7 +277,12 @@ foreach ($r in $registros) {
     if ($null -ne $r.FechaCierre) { $cierreTxt = $r.FechaCierre.ToString('dd-MM-yyyy HH:mm') }
     $chipClase = 'd-ok'; $chipTxt = 'sin fecha'
     if ($null -ne $r.Dias) {
-        if     ($r.Dias -le 0) { $chipTxt = 'hoy';                          $chipClase = 'd-crit' }
+        if ($r.Dias -le 0) {
+            $horas = [Math]::Floor(($r.FechaCierre - $ahora).TotalHours)
+            if     ($horas -lt 1) { $chipTxt = 'HOY &middot; &iexcl;&uacute;ltima hora!' }
+            else                  { $chipTxt = ('HOY &middot; quedan ' + $horas + ' h') }
+            $chipClase = 'd-crit'
+        }
         elseif ($r.Dias -eq 1) { $chipTxt = 'ma&ntilde;ana';                $chipClase = 'd-crit' }
         elseif ($r.Dias -le 2) { $chipTxt = ('' + $r.Dias + ' d&iacute;as'); $chipClase = 'd-crit' }
         elseif ($r.Dias -le 7) { $chipTxt = ('' + $r.Dias + ' d&iacute;as'); $chipClase = 'd-warn' }
@@ -392,7 +411,7 @@ footer dd{margin:0}
 <header>
   <div class="eyebrow">Mercado P&uacute;blico &middot; ChileCompra</div>
   <h1>Radar de Capacitaciones</h1>
-  <p class="sub">Licitaciones p&uacute;blicas <strong>abiertas</strong> relacionadas con capacitaci&oacute;n, cursos, formaci&oacute;n y relator&iacute;as, ordenadas por fecha de cierre. Actualizado el <strong>__GENERADO__</strong> &middot; Fuente: API oficial de Mercado P&uacute;blico.</p>
+  <p class="sub">Licitaciones p&uacute;blicas <strong>abiertas</strong> relacionadas con capacitaci&oacute;n, cursos, formaci&oacute;n y relator&iacute;as, ordenadas por fecha de cierre. Actualizado el <strong>__GENERADO__</strong> (hora de Chile) &middot; Fuente: API oficial de Mercado P&uacute;blico.</p>
 </header>
 <section class="kpis">
   <div class="kpi"><div class="num">__KPI_TOTAL__</div><div class="lbl">licitaciones abiertas</div></div>
@@ -413,6 +432,7 @@ footer dd{margin:0}
   </select>
   <select id="plazo" aria-label="Filtrar por plazo de cierre">
     <option value="">Cualquier plazo</option>
+    <option value="0">Cierran hoy</option>
     <option value="7">Cierran en 7 d&iacute;as o menos</option>
     <option value="3">Cierran en 3 d&iacute;as o menos</option>
     <option value="14">Cierran en 14 d&iacute;as o menos</option>
